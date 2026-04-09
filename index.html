@@ -2,124 +2,89 @@
 <html lang="vi">
 <head>
     <meta charset="UTF-8">
-    <title>Sách Lật Trang - Firebase Cloud Edition</title>
+    <title>Sách Lật Trang - Chia sẻ Cộng đồng</title>
     <script src="libs/pdf.min.js"></script>
     <script src="libs/qrcode.min.js"></script>
     <script src="libs/crypto-js.min.js"></script>
-    
-    <!-- Firebase SDK Compat -->
-    <script src="https://gstatic.com"></script>
-    <script src="https://gstatic.com"></script>
-    <script src="https://gstatic.com"></script>
-
     <style>
         :root { --page-w: 500px; --page-h: 700px; --accent: #3498db; }
-        body { background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
-        .controls { margin-bottom: 20px; z-index: 1000; background: #333; padding: 15px 25px; border-radius: 50px; display: flex; gap: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; }
+        .controls { margin-bottom: 20px; background: #333; padding: 15px 25px; border-radius: 50px; display: flex; gap: 15px; }
         .btn { padding: 10px 20px; cursor: pointer; background: var(--accent); border: none; color: white; border-radius: 20px; font-weight: bold; }
-        #book { position: relative; width: calc(var(--page-w) * 2); height: var(--page-h); perspective: 2500px; display: none; margin: 20px auto; cursor: grab; }
+        #book { position: relative; width: calc(var(--page-w) * 2); height: var(--page-h); perspective: 2500px; display: none; margin: 20px auto; }
         .paper { position: absolute; width: var(--page-w); height: 100%; top: 0; right: 0; transform-origin: left center; transition: transform 0.6s ease; transform-style: preserve-3d; }
         .front, .back { position: absolute; width: 100%; height: 100%; top: 0; left: 0; backface-visibility: hidden; background: white; border: 1px solid #ccc; }
         .back { transform: rotateY(180deg); }
         .paper.flipped { transform: rotateY(-180deg); }
-        #qr-section { background: white; padding: 20px; border-radius: 15px; display: none; color: black; text-align: center; }
-        #loader { display: none; color: #f1c40f; margin: 10px; font-weight: bold; text-align: center; }
-        #history-section { width: 100%; max-width: 800px; margin-top: 50px; border-top: 1px solid #444; padding-top: 20px; }
-        .history-item { background: #252525; padding: 10px; margin: 5px 0; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
-        canvas { width: 100%; height: 100%; display: block; image-rendering: -webkit-optimize-contrast; }
+        #qr-section { background: white; padding: 20px; border-radius: 15px; display: none; color: black; text-align: center; margin-top: 20px; }
+        #loader { display: none; color: #f1c40f; margin: 10px; font-weight: bold; }
     </style>
 </head>
 <body>
-
     <div class="controls">
         <input type="file" id="pdf-input" accept=".pdf" style="display:none">
-        <button class="btn" onclick="document.getElementById('pdf-input').click()">📁 Tải file lên Firebase</button>
+        <button class="btn" onclick="document.getElementById('pdf-input').click()">📁 Tải lên & Tạo QR</button>
         <button class="btn" onclick="prevPage()">⬅️</button>
         <button class="btn" onclick="nextPage()">➡️</button>
     </div>
-
-    <div id="loader">Đang xử lý dữ liệu trên Google Cloud...</div>
+    <div id="loader">Đang bảo mật dữ liệu...</div>
     <div id="book" onclick="handleBookClick(event)"></div>
-    <div id="qr-section"><div id="qrcode" style="display:flex;justify-content:center"></div><p style="font-weight:bold">QUÉT ĐỂ XEM TRÊN ĐIỆN THOẠI</p></div>
-    <div id="history-section"><h3>📚 Lịch sử tài liệu</h3><div id="history-list"></div></div>
+    <div id="qr-section"><div id="qrcode" style="display:flex;justify-content:center"></div><p>QUÉT ĐỂ XEM TÀI LIỆU</p></div>
 
 <script>
-    // Cấu hình Firebase của bạn
-    const firebaseConfig = {
-    apiKey: "AIzaSyCKNvoEPqzKrwCK54aVU3kE2pR1OvTl6LY",
-    authDomain: "cuonsach-ac756.firebaseapp.com",
-    projectId: "cuonsach-ac756",
-    storageBucket: "cuonsach-ac756.firebasestorage.app",
-    messagingSenderId: "648623297173",
-    appId: "1:648623297173:web:dd949bc4be004cccc2819c",
-    measurementId: "G-B32FQM2D1Q"
-  };
-
-    firebase.initializeApp(firebaseConfig);
-    const db = firebase.firestore();
-    const storage = firebase.storage();
-
     let pdfDoc = null, currPaperIdx = 0;
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
 
-    window.onload = () => {
-        updateHistoryUI();
+    // 1. TỰ ĐỘNG LOAD KHI CÓ ID TRÊN LINK
+    window.onload = async () => {
         const params = new URLSearchParams(window.location.search);
-        const id = params.get('id'), k = params.get('k') || localStorage.getItem('key_' + id);
-        if (id && k) loadAndDecrypt(id, k);
+        const fileId = params.get('id'), k = params.get('k');
+        if (fileId && k) {
+            document.getElementById('loader').style.display = 'block';
+            try {
+                const res = await fetch(`https://file.io{fileId}`);
+                const data = await res.json();
+                const decrypted = CryptoJS.AES.decrypt(data.text, k).toString(CryptoJS.enc.Utf8);
+                renderFullBook(decrypted);
+            } catch (e) { alert("Tài liệu đã hết hạn hoặc không tồn tại!"); }
+            document.getElementById('loader').style.display = 'none';
+        }
     };
 
+    // 2. XỬ LÝ UPLOAD (KHÔNG CẦN TOKEN)
     document.getElementById('pdf-input').addEventListener('change', async (e) => {
-        const file = e.target.files[0]; if (!file) return;
+        const file = e.target.files; if (!file) return;
         const reader = new FileReader();
         reader.onload = async function() {
             document.getElementById('loader').style.display = 'block';
             const secretKey = CryptoJS.lib.WordArray.random(16).toString();
             const encrypted = CryptoJS.AES.encrypt(reader.result, secretKey).toString();
-            const docId = Math.random().toString(36).substring(2, 12).toUpperCase();
 
             try {
-                // 1. Lưu lên Storage
-                const storageRef = storage.ref(`books/${docId}.txt`);
-                await storageRef.putString(encrypted);
-                
-                // 2. Lưu vào Firestore
-                await db.collection("docs").doc(docId).set({ name: file.name, createdAt: new Date() });
+                const formData = new FormData();
+                formData.append('text', encrypted);
 
-                // 3. Ghi nhớ và sinh QR
-                localStorage.setItem('key_' + docId, secretKey);
-                saveToHistory(docId, file.name, secretKey);
+                const res = await fetch('https://file.io', {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await res.json();
                 
-                const currentUrl = window.location.origin + window.location.pathname;
-                showQR(`${currentUrl}?id=${docId}&k=${secretKey}`);
-                await renderFullBook(reader.result);
-            } catch (err) { 
-                console.error(err);
-                alert("Lỗi Firebase: Vui lòng kiểm tra tab Rules trong Storage/Firestore và đổi 'false' thành 'true'!"); 
-            }
+                if (result.success) {
+                    const shareURL = `${window.location.origin}${window.location.pathname}?id=${result.key}&k=${secretKey}`;
+                    showQR(shareURL);
+                    renderFullBook(reader.result);
+                }
+            } catch (err) { alert("Lỗi lưu trữ Cloud!"); }
             document.getElementById('loader').style.display = 'none';
         };
         reader.readAsDataURL(file);
     });
 
-    async function loadAndDecrypt(id, key) {
-        document.getElementById('loader').style.display = 'block';
-        try {
-            const storageRef = storage.ref(`books/${id}.txt`);
-            const url = await storageRef.getDownloadURL();
-            const response = await fetch(url);
-            const encryptedText = await response.text();
-            const decrypted = CryptoJS.AES.decrypt(encryptedText, key).toString(CryptoJS.enc.Utf8);
-            if (!decrypted) throw new Error();
-            renderFullBook(decrypted);
-        } catch (e) { alert("Không thể tải tài liệu. Vui lòng kiểm tra mã QR hoặc Rules!"); }
-        document.getElementById('loader').style.display = 'none';
-    }
-
+    // --- Các hàm render giữ nguyên để đảm bảo mượt ---
     async function renderFullBook(data) {
         pdfDoc = await pdfjsLib.getDocument(data).promise;
         const book = document.getElementById('book'); book.innerHTML = ''; book.style.display = 'block';
-        currPaperIdx = 0;
         for (let i = 1; i <= pdfDoc.numPages; i += 2) {
             const paper = document.createElement('div');
             paper.className = 'paper'; paper.style.zIndex = pdfDoc.numPages - i;
@@ -129,33 +94,17 @@
             book.appendChild(paper);
         }
     }
-
     async function renderPage(num) {
         const page = await pdfDoc.getPage(num);
-        const viewport = page.getViewport({ scale: 2 });
         const canvas = document.createElement('canvas');
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: page.getViewport({ scale: 1.5 }) }).promise;
         return canvas;
     }
-
     function showQR(url) {
         document.getElementById('qr-section').style.display = 'block';
         document.getElementById('qrcode').innerHTML = '';
         new QRCode(document.getElementById("qrcode"), { text: url, width: 150, height: 150 });
     }
-
-    function saveToHistory(id, name, key) {
-        let history = JSON.parse(localStorage.getItem('pdf_history') || '[]');
-        history.unshift({ id, name, key, date: new Date().toLocaleString() });
-        localStorage.setItem('pdf_history', JSON.stringify(history.slice(0, 5)));
-        updateHistoryUI();
-    }
-
-    function updateHistoryUI() {
-        const list = document.getElementById('history-list'), history = JSON.parse(localStorage.getItem('pdf_history') || '[]');
-        if (history.length) list.innerHTML = history.map(item => `<div class="history-item"><div><b>${item.name}</b></div><button class="btn" style="font-size:10px" onclick="loadAndDecrypt('${item.id}','${item.key}')">Xem lại</button></div>`).join('');
-    }
-
     function nextPage() { const p = document.querySelectorAll('.paper'); if (currPaperIdx < p.length) { p[currPaperIdx].classList.add('flipped'); p[currPaperIdx].style.zIndex = currPaperIdx + 1; currPaperIdx++; } }
     function prevPage() { const p = document.querySelectorAll('.paper'); if (currPaperIdx > 0) { currPaperIdx--; p[currPaperIdx].classList.remove('flipped'); p[currPaperIdx].style.zIndex = p.length - currPaperIdx; } }
     function handleBookClick(e) { const r = book.getBoundingClientRect(); if ((e.clientX - r.left) > r.width / 2) nextPage(); else prevPage(); }

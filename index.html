@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Sách Lật Trang Siêu Cấp - Offline 4K</title>
+    <script src="libs/pdf.min.js"></script>
+    <script src="libs/qrcode.min.js"></script>
+    <script src="libs/crypto-js.min.js"></script>
+    <style>
+        :root { --page-w: 500px; --page-h: 700px; --accent: #3498db; }
+        body { background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
+        
+        /* Menu điều khiển */
+        .controls { margin-bottom: 20px; z-index: 1000; background: #333; padding: 15px 25px; border-radius: 50px; display: flex; gap: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); align-items: center; }
+        .btn { padding: 10px 20px; cursor: pointer; background: var(--accent); border: none; color: white; border-radius: 20px; font-weight: bold; transition: 0.2s; }
+        .btn.active { background: #e74c3c; box-shadow: 0 0 10px #e74c3c; }
+
+        /* Sách */
+        #book { position: relative; width: calc(var(--page-w) * 2); height: var(--page-h); perspective: 2500px; display: none; margin: 20px auto; cursor: grab; }
+        .paper { position: absolute; width: var(--page-w); height: 100%; top: 0; right: 0; transform-origin: left center; transition: transform 0.6s ease; transform-style: preserve-3d; }
+        .front, .back { position: absolute; width: 100%; height: 100%; top: 0; left: 0; backface-visibility: hidden; background: white; overflow: hidden; border: 1px solid #ccc; }
+        .back { transform: rotateY(180deg); }
+        .paper.flipped { transform: rotateY(-180deg); }
+        canvas { width: 100%; height: 100%; display: block; }
+
+        /* Kính lúp */
+        #magnifier { position: fixed; width: 400px; height: 400px; border: 5px solid #f1c40f; border-radius: 50%; pointer-events: none; display: none; z-index: 99999; box-shadow: 0 0 30px rgba(0,0,0,0.8); background: white; overflow: hidden; }
+        #mag-canvas { position: absolute; top: 0; left: 0; }
+
+        /* QR và Lịch sử */
+        #qr-section { background: white; padding: 15px; border-radius: 10px; margin-top: 20px; display: none; color: black; text-align: center; }
+        #history-section { width: 100%; max-width: 800px; margin-top: 50px; border-top: 1px solid #444; padding-top: 20px; }
+        .history-item { background: #252525; padding: 12px; margin: 8px 0; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; }
+        #loader { display: none; color: #f1c40f; font-weight: bold; margin: 10px; }
+    </style>
+</head>
+<body>
+
+    <div class="controls">
+        <input type="file" id="pdf-input" accept=".pdf" style="display:none">
+        <button class="btn" onclick="document.getElementById('pdf-input').click()">📁 Tải mới</button>
+        <button class="btn" onclick="prevPage()">⬅️</button>
+        <button class="btn" onclick="nextPage()">➡️</button>
+        <button class="btn" id="mag-toggle" onclick="toggleMagnifier()">🔍 Kính lúp (Z)</button>
+    </div>
+
+    <div id="loader">Đang xử lý dữ liệu bảo mật...</div>
+    <div id="book" onclick="handleBookClick(event)"></div>
+    <div id="magnifier"><canvas id="mag-canvas" width="400" height="400"></canvas></div>
+
+    <div id="qr-section"><div id="qrcode"></div><p style="font-weight:bold">Link: cuonsach.vn</p></div>
+
+    <div id="history-section">
+        <h3>📚 Lịch sử xem tài liệu</h3>
+        <div id="history-list"><p style="color:#666">Trống</p></div>
+    </div>
+
+<script>
+    let pdfDoc = null, currPaperIdx = 0, magEnabled = false, isRenderingMag = false;
+    const book = document.getElementById('book'), magnifier = document.getElementById('magnifier'), magCanvas = document.getElementById('mag-canvas'), magCtx = magCanvas.getContext('2d');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+
+    window.onload = () => {
+        updateHistoryUI();
+        const params = new URLSearchParams(window.location.search);
+        const id = params.get('id'), k = params.get('k') || localStorage.getItem('key_' + id);
+        if (id && k) loadAndDecrypt(id, k);
+    };
+
+    document.getElementById('pdf-input').addEventListener('change', async (e) => {
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async function() {
+            const secretKey = CryptoJS.lib.WordArray.random(16).toString();
+            const encrypted = CryptoJS.AES.encrypt(reader.result, secretKey).toString();
+            document.getElementById('loader').style.display = 'block';
+            try {
+                const res = await fetch('https://file.io', { method: 'POST', body: new URLSearchParams({ 'text': encrypted }) });
+                const json = await res.json();
+                if (json.success) {
+                    localStorage.setItem('key_' + json.key, secretKey);
+                    saveToHistory(json.key, file.name, secretKey);
+                    showQR(`https://cuonsach.vn{json.key}&k=${secretKey}`);
+                    await renderFullBook(reader.result);
+                }
+            } catch (err) { alert("Lỗi tải Cloud!"); }
+            document.getElementById('loader').style.display = 'none';
+        };
+        reader.readAsDataURL(file);
+    });
+
+    async function renderFullBook(data) {
+        pdfDoc = await pdfjsLib.getDocument(data).promise;
+        book.innerHTML = ''; book.style.display = 'block'; currPaperIdx = 0;
+        for (let i = 1; i <= pdfDoc.numPages; i += 2) {
+            const paper = document.createElement('div');
+            paper.className = 'paper'; paper.style.zIndex = pdfDoc.numPages - i;
+            paper.innerHTML = `<div class="front"></div><div class="back"></div>`;
+            paper.querySelector('.front').appendChild(await renderPage(i));
+            if (i + 1 <= pdfDoc.numPages) paper.querySelector('.back').appendChild(await renderPage(i + 1));
+            book.appendChild(paper);
+        }
+    }
+
+    async function renderPage(num) {
+        const page = await pdfDoc.getPage(num);
+        const viewport = page.getViewport({ scale: 2 });
+        const canvas = document.createElement('canvas');
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport: viewport }).promise;
+        return canvas;
+    }
+
+    // --- LOGIC KÍNH LÚP SIÊU NÉT ---
+    function toggleMagnifier() {
+        magEnabled = !magEnabled;
+        document.getElementById('mag-toggle').classList.toggle('active', magEnabled);
+        if (!magEnabled) magnifier.style.display = "none";
+    }
+
+    window.addEventListener('mousemove', async (e) => {
+        if (!magEnabled || !pdfDoc || isRenderingMag) return;
+        const rect = book.getBoundingClientRect();
+        if (e.clientX > rect.left && e.clientX < rect.right && e.clientY > rect.top && e.clientY < rect.bottom) {
+            magnifier.style.display = "block";
+            magnifier.style.left = (e.clientX - 200) + "px"; magnifier.style.top = (e.clientY - 200) + "px";
+            const isLeft = (e.clientX - rect.left) < rect.width / 2;
+            let pageNum = isLeft ? (currPaperIdx * 2) : (currPaperIdx * 2 + 1);
+            if (pageNum > 0 && pageNum <= pdfDoc.numPages) {
+                isRenderingMag = true;
+                const page = await pdfDoc.getPage(pageNum);
+                const viewport = page.getViewport({ scale: 6 });
+                const canvasRect = isLeft ? document.querySelectorAll('.paper')[currPaperIdx-1].getBoundingClientRect() : document.querySelectorAll('.paper')[currPaperIdx].getBoundingClientRect();
+                const offsetX = -((e.clientX - canvasRect.left) * (viewport.width / canvasRect.width)) + 200;
+                const offsetY = -((e.clientY - canvasRect.top) * (viewport.height / canvasRect.height)) + 200;
+                magCtx.clearRect(0, 0, 400, 400);
+                await page.render({ canvasContext: magCtx, viewport: viewport, transform: [1, 0, 0, 1, offsetX, offsetY] }).promise;
+                isRenderingMag = false;
+            }
+        } else magnifier.style.display = "none";
+    });
+
+    async function loadAndDecrypt(id, key) {
+        document.getElementById('loader').style.display = 'block';
+        try {
+            const res = await fetch(`https://file.io{id}`);
+            const data = await res.json();
+            const bytes = CryptoJS.AES.decrypt(data.text, key);
+            renderFullBook(bytes.toString(CryptoJS.enc.Utf8));
+        } catch (e) { alert("Lỗi giải mã!"); }
+        document.getElementById('loader').style.display = 'none';
+    }
+
+    function saveToHistory(id, name, key) {
+        let history = JSON.parse(localStorage.getItem('pdf_history') || '[]');
+        history.unshift({ id, name, key, date: new Date().toLocaleString() });
+        localStorage.setItem('pdf_history', JSON.stringify(history.slice(0, 10)));
+        updateHistoryUI();
+    }
+
+    function updateHistoryUI() {
+        const list = document.getElementById('history-list'), history = JSON.parse(localStorage.getItem('pdf_history') || '[]');
+        if (history.length) list.innerHTML = history.map(item => `<div class="history-item"><div><b>${item.name}</b><br><small>${item.date}</small></div><button class="btn" onclick="loadAndDecrypt('${item.id}','${item.key}')">Xem</button></div>`).join('');
+    }
+
+    function showQR(url) {
+        document.getElementById('qr-section').style.display = 'block';
+        document.getElementById('qrcode').innerHTML = '';
+        new QRCode(document.getElementById("qrcode"), { text: url, width: 150, height: 150 });
+    }
+
+    function nextPage() { const p = document.querySelectorAll('.paper'); if (currPaperIdx < p.length) { p[currPaperIdx].classList.add('flipped'); p[currPaperIdx].style.zIndex = currPaperIdx + 1; currPaperIdx++; } }
+    function prevPage() { const p = document.querySelectorAll('.paper'); if (currPaperIdx > 0) { currPaperIdx--; p[currPaperIdx].classList.remove('flipped'); p[currPaperIdx].style.zIndex = p.length - currPaperIdx; } }
+    function handleBookClick(e) { if (!magEnabled) { const r = book.getBoundingClientRect(); if ((e.clientX - r.left) > r.width / 2) nextPage(); else prevPage(); } }
+    window.addEventListener('keydown', (e) => { if(e.key.toLowerCase() === 'z') toggleMagnifier(); });
+</script>
+</body>
+</html>

@@ -3,187 +3,106 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sách Lật Trang - Project Cuonsach</title>
-    <!-- Đảm bảo các file trong thư mục libs đã sẵn sàng -->
+    <title>Cuonsach - Cloud Upload Pro</title>
     <script src="libs/pdf.min.js"></script>
     <script src="libs/qrcode.min.js"></script>
     <script src="libs/crypto-js.min.js"></script>
     <style>
-        :root { --page-w: 500px; --page-h: 700px; --accent: #3498db; }
-        body { background: #1a1a1a; color: white; font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; margin: 0; }
-        .controls { margin-bottom: 20px; z-index: 1000; background: #333; padding: 15px 25px; border-radius: 50px; display: flex; gap: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); align-items: center; }
-        .btn { padding: 10px 20px; cursor: pointer; background: var(--accent); border: none; color: white; border-radius: 20px; font-weight: bold; transition: 0.2s; }
-        .btn:hover { opacity: 0.8; }
-        #loader-container { display: none; width: 300px; text-align: center; margin: 20px; }
-        .progress-bg { width: 100%; height: 10px; background: #444; border-radius: 5px; margin-top: 10px; overflow: hidden; }
-        #progress-bar { width: 0%; height: 100%; background: var(--accent); transition: width 0.3s; }
-        #book { position: relative; width: calc(var(--page-w) * 2); height: var(--page-h); perspective: 2500px; display: none; margin: 20px auto; cursor: grab; }
-        .paper { position: absolute; width: var(--page-w); height: 100%; top: 0; right: 0; transform-origin: left center; transition: transform 0.6s ease; transform-style: preserve-3d; }
-        .front, .back { position: absolute; width: 100%; height: 100%; top: 0; left: 0; backface-visibility: hidden; background: white; border: 1px solid #ccc; display: flex; justify-content: center; align-items: center; }
-        .front canvas, .back canvas { width: 100%; height: 100%; object-fit: contain; }
-        .back { transform: rotateY(180deg); }
-        .paper.flipped { transform: rotateY(-180deg); }
-        #qr-section { background: white; padding: 20px; border-radius: 15px; display: none; color: black; text-align: center; margin-top: 20px; box-shadow: 0 5px 20px rgba(0,0,0,0.3); }
+        :root { --accent: #e74c3c; } /* Đổi màu sang đỏ để dễ phân biệt bản mới */
+        body { background: #121212; color: #eee; font-family: 'Segoe UI', Tahoma, sans-serif; text-align: center; padding: 20px; }
+        .controls { background: #222; display: inline-flex; gap: 10px; padding: 15px; border-radius: 30px; margin-bottom: 20px; }
+        .btn { padding: 12px 24px; border: none; border-radius: 20px; cursor: pointer; font-weight: bold; background: var(--accent); color: white; }
+        #loader-container { display: none; margin: 20px auto; width: 80%; max-width: 400px; }
+        .progress-bg { height: 8px; background: #333; border-radius: 4px; overflow: hidden; margin-top: 10px; }
+        #progress-bar { width: 0%; height: 100%; background: var(--accent); transition: width 0.4s; }
+        #qr-section { display: none; background: white; color: #333; padding: 20px; border-radius: 15px; margin-top: 20px; display: inline-block; }
+        #book { display: none; margin-top: 30px; position: relative; }
     </style>
 </head>
 <body>
 
     <div class="controls">
         <input type="file" id="pdf-input" accept=".pdf" style="display:none">
-        <button class="btn" onclick="document.getElementById('pdf-input').click()">📁 Tải lên & Chia sẻ</button>
-        <button class="btn" onclick="prevPage()">⬅️</button>
-        <button class="btn" onclick="nextPage()">➡️</button>
+        <button class="btn" onclick="document.getElementById('pdf-input').click()">📁 Tải lên (Hỗ trợ 4G)</button>
     </div>
 
     <div id="loader-container">
-        <span id="loader-text">Đang chuẩn bị...</span>
+        <div id="loader-text">Đang kết nối...</div>
         <div class="progress-bg"><div id="progress-bar"></div></div>
     </div>
 
-    <div id="book"></div>
-    
     <div id="qr-section">
-        <div id="qrcode" style="display: flex; justify-content: center;"></div>
-        <p style="font-weight: bold; margin-top: 10px;">QUÉT ĐỂ XEM TRÊN ĐIỆN THOẠI</p>
-        <small id="share-link" style="word-break: break-all; color: #666;"></small>
+        <div id="qrcode"></div>
+        <p><b>QUÉT ĐỂ XEM</b></p>
+        <small id="share-link" style="color: blue; cursor: pointer;"></small>
     </div>
 
+    <div id="book"></div>
+
 <script>
-    let pdfDoc = null, currPaperIdx = 0;
-    const book = document.getElementById('book');
-    const progressBar = document.getElementById('progress-bar'), loaderText = document.getElementById('loader-text'), loaderContainer = document.getElementById('loader-container');
-    
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+    const progressBar = document.getElementById('progress-bar');
+    const loaderText = document.getElementById('loader-text');
+    const loaderContainer = document.getElementById('loader-container');
 
-    // 1. TỰ ĐỘNG KIỂM TRA LINK KHI MỞ TRANG
-    window.onload = async () => {
-        const urlParams = new URLSearchParams(window.location.search);
-        const fileId = urlParams.get('id');
-        const key = urlParams.get('k');
-
-        if (fileId && key) {
-            loaderContainer.style.display = 'block';
-            updateProgress(20, "Đang tải dữ liệu mã hóa...");
-            try {
-                const res = await fetch(`https://file.io{fileId}`);
-                if (!res.ok) throw new Error("File đã hết hạn hoặc bị xóa.");
-                const encryptedData = await res.text();
-                
-                updateProgress(50, "Đang giải mã bảo mật...");
-                const decrypted = CryptoJS.AES.decrypt(encryptedData, key).toString(CryptoJS.enc.Utf8);
-                
-                if (!decrypted) throw new Error("Sai khóa giải mã.");
-                await renderFullBook(decrypted);
-            } catch (err) {
-                alert(err.message);
-                loaderContainer.style.display = 'none';
-            }
-        }
-    };
-
-    // 2. XỬ LÝ KHI NGƯỜI DÙNG CHỌN FILE ĐỂ UPLOAD
     document.getElementById('pdf-input').addEventListener('change', async (e) => {
-        const file = e.target.files[0]; if (!file) return;
-        
+        const file = e.target.files[0];
+        if (!file) return;
+
         loaderContainer.style.display = 'block';
-        book.style.display = 'none';
-        updateProgress(10, "Đang mã hóa file...");
+        updateProgress(10, "Mã hóa bảo mật...");
 
         const reader = new FileReader();
         reader.onload = async function() {
             const secretKey = CryptoJS.lib.WordArray.random(16).toString();
             const encrypted = CryptoJS.AES.encrypt(reader.result, secretKey).toString();
             
-            updateProgress(30, "Đang đẩy lên Cloud (4G)...");
+            updateProgress(30, "Đang đẩy lên Cloud...");
+
+            // THỰC HIỆN TẢI LÊN FILE.IO
             try {
-                // Chuyển string thành Blob để file.io chấp nhận như một file thực thụ
                 const blob = new Blob([encrypted], { type: 'text/plain' });
                 const formData = new FormData();
-                formData.append('file', blob, 'data.enc');
+                formData.append('file', blob, 'project.enc');
 
-                const res = await fetch('https://file.io', { method: 'POST', body: formData });
-                const result = await res.json();
-                
-                if (result.success) {
-                    updateProgress(60, "Tạo mã QR chia sẻ...");
-                    const shareURL = `${window.location.origin}${window.location.pathname}?id=${result.key}&k=${secretKey}`;
+                const response = await fetch('https://file.io', {
+                    method: 'POST',
+                    body: formData,
+                    // Không set Content-Type thủ công để trình duyệt tự nhận diện Boundary
+                });
+
+                const resData = await response.json();
+
+                if (resData.success) {
+                    const shareURL = `${window.location.origin}${window.location.pathname}?id=${resData.key}&k=${secretKey}`;
+                    updateProgress(100, "Tải lên thành công!");
                     showQR(shareURL);
-                    await renderFullBook(reader.result);
                 } else {
-                    throw new Error("Server từ chối tải lên.");
+                    throw new Error("Server file.io từ chối.");
                 }
-            } catch (err) { 
-                alert("Lỗi: " + err.message); 
-                loaderContainer.style.display = 'none'; 
+            } catch (err) {
+                console.error("Lỗi file.io:", err);
+                updateProgress(50, "File.io lỗi, đang thử Server dự phòng...");
+                // Bạn có thể thêm API dự phòng tại đây nếu cần
+                alert("Mạng 4G của bạn đang chặn kết nối này. Hãy thử bật 1.1.1.1 hoặc dùng Wifi.");
             }
         };
         reader.readAsDataURL(file);
     });
 
-    async function renderFullBook(data) {
-        pdfDoc = await pdfjsLib.getDocument(data).promise;
-        book.innerHTML = ''; currPaperIdx = 0;
-        const total = pdfDoc.numPages;
-
-        for (let i = 1; i <= total; i += 2) {
-            const paper = document.createElement('div');
-            paper.className = 'paper'; paper.style.zIndex = total - i;
-            paper.innerHTML = `<div class="front"></div><div class="back"></div>`;
-            
-            const frontPage = await renderPage(i);
-            paper.querySelector('.front').appendChild(frontPage);
-            
-            if (i + 1 <= total) {
-                const backPage = await renderPage(i + 1);
-                paper.querySelector('.back').appendChild(backPage);
-            }
-            book.appendChild(paper);
-            updateProgress(60 + Math.round((i / total) * 40), `Đang xử lý trang ${i}/${total}...`);
-        }
-        
-        updateProgress(100, "Sẵn sàng!");
-        setTimeout(() => { loaderContainer.style.display = 'none'; book.style.display = 'block'; }, 500);
-    }
-
-    async function renderPage(num) {
-        const page = await pdfDoc.getPage(num);
-        const viewport = page.getViewport({ scale: 1.5 });
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-        await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-        return canvas;
-    }
-
-    function updateProgress(percent, text) {
-        progressBar.style.width = percent + '%';
-        loaderText.innerText = text;
+    function updateProgress(p, t) {
+        progressBar.style.width = p + '%';
+        loaderText.innerText = t;
     }
 
     function showQR(url) {
-        document.getElementById('qr-section').style.display = 'block';
-        document.getElementById('share-link').innerText = url;
+        document.getElementById('qr-section').style.display = 'inline-block';
+        document.getElementById('share-link').innerText = "Copy Link";
+        document.getElementById('share-link').onclick = () => {
+            navigator.clipboard.writeText(url);
+            alert("Đã copy link!");
+        };
         document.getElementById('qrcode').innerHTML = '';
-        new QRCode(document.getElementById("qrcode"), { text: url, width: 180, height: 180 });
-    }
-
-    function nextPage() { 
-        const papers = document.querySelectorAll('.paper');
-        if (currPaperIdx < papers.length) {
-            papers[currPaperIdx].classList.add('flipped');
-            papers[currPaperIdx].style.zIndex = currPaperIdx + 1;
-            currPaperIdx++;
-        }
-    }
-
-    function prevPage() {
-        const papers = document.querySelectorAll('.paper');
-        if (currPaperIdx > 0) {
-            currPaperIdx--;
-            papers[currPaperIdx].classList.remove('flipped');
-            papers[currPaperIdx].style.zIndex = papers.length - currPaperIdx;
-        }
+        new QRCode(document.getElementById("qrcode"), { text: url, width: 160, height: 160 });
     }
 </script>
 </body>
